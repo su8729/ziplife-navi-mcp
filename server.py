@@ -11,8 +11,8 @@ from mcp.server.fastmcp import FastMCP
 mcp = FastMCP(
     "ZipLife Navi",
     json_response=True,
-    host="0.0.0.0", 
-    port=int(os.environ.get("PORT", 8000)),  
+    host="0.0.0.0",  # Docker 컨테이너 밖(PlayMCP)에서 접속 가능하려면 필수. 127.0.0.1이면 컨테이너 내부에서만 접근 가능.
+    port=int(os.environ.get("PORT", 8000)),  # 플랫폼이 PORT 환경변수를 주입하는 경우 그 값을 사용, 없으면 8000
 )
 
 
@@ -1298,9 +1298,9 @@ def search_lh_rental_complexes(
 
 @mcp.tool(annotations=READ_ONLY)
 def parse_housing_profile(user_text: str) -> dict[str, Any]:
-    """ZipLife Navi extracts renter, moving, and housing-support conditions from natural Korean text,
-    including relative dates (다음 달 20일), Korean-numeral amounts (월세 칠십, 보증금 천만원),
-    districts (서울 관악구), annual income (연봉 3000), and contract stage (계약 전 / 계약함)."""
+    """집생활 내비: 자연어 문장에서 세입자의 이사·주거지원 관련 조건을 추출한다.
+    상대적 날짜(다음 달 20일), 한글 숫자 금액(월세 칠십, 보증금 천만원), 구/군(서울 관악구),
+    연봉(연봉 3000), 계약 단계(계약 전 / 계약함) 등을 인식한다."""
 
     region = next((r for r in ["서울", "경기", "인천", "부산", "대구", "대전", "광주", "울산", "세종", "강원", "충북", "충남", "전북", "전남", "경북", "경남", "제주"] if r in user_text), None)
 
@@ -1381,7 +1381,7 @@ def parse_housing_profile(user_text: str) -> dict[str, Any]:
 
 @mcp.tool(annotations=READ_ONLY)
 def ask_missing_info(profile: dict[str, Any]) -> dict[str, Any]:
-    """ZipLife Navi creates follow-up questions needed to judge housing benefit eligibility more safely."""
+    """집생활 내비: 주거지원 대상 여부를 더 정확히 판단하기 위해 부족한 정보를 질문 형태로 만든다."""
     question_map = {
         "age": "나이가 어떻게 돼?",
         "region": "어느 지역 집으로 이사해?",
@@ -1412,13 +1412,11 @@ def ask_missing_info(profile: dict[str, Any]) -> dict[str, Any]:
 
 @mcp.tool(annotations=READ_ONLY)
 def match_housing_benefits(profile: dict[str, Any]) -> dict[str, Any]:
-    """ZipLife Navi matches candidate Korean housing support benefits with a 3-tier status
-    (가능성 높음 / 추가 확인 필요 / 현재 조건상 어려움), each with reasoning, missing info,
-    official sources to verify, and cautions. Never makes a final legal eligibility claim.
-    For 청년(age<=39) profiles, also pulls live youth policy candidates from the official
-    youthcenter.go.kr API (via search_official_youth_policy) alongside the static matches.
-    For 신혼(married_or_planning) profiles with a known region, also pulls live LH 공공임대주택
-    단지 목록(via search_lh_rental_complexes, 신혼희망타운 키워드) alongside the static matches."""
+    """집생활 내비: 주거지원 제도 후보를 3단계 상태(가능성 높음 / 추가 확인 필요 / 현재 조건상 어려움)로
+    매칭하고, 각 제도마다 매칭 이유·부족한 정보·공식 확인처·주의사항을 함께 제공한다. 최종 법적 자격
+    판정은 절대 하지 않는다. 청년(만 39세 이하) 프로필이면 온통청년 공식 API(search_official_youth_policy)에서
+    실시간 청년정책 후보도 함께 가져온다. 신혼(예정 포함) 프로필이고 지역이 확인되면 LH 공공임대주택
+    단지 목록(search_lh_rental_complexes, 신혼희망타운 키워드)도 실시간으로 함께 가져온다."""
 
     tags = set()
     is_youth = profile.get("age") is not None and profile["age"] <= 39
@@ -1548,8 +1546,8 @@ def match_housing_benefits(profile: dict[str, Any]) -> dict[str, Any]:
 
 @mcp.tool(annotations=READ_ONLY)
 def generate_moving_timeline(move_date: str, housing_type: str = "월세") -> dict[str, Any]:
-    """ZipLife Navi generates a D-day moving checklist for jeonse or monthly-rent tenants.
-    move_date must be an ISO date string (YYYY-MM-DD), e.g. the output of parse_housing_profile."""
+    """집생활 내비: 전세/월세 세입자를 위한 이사 D-day 체크리스트를 생성한다.
+    move_date는 ISO 날짜 형식(YYYY-MM-DD)이어야 하며, parse_housing_profile의 출력값을 그대로 넣을 수 있다."""
 
     try:
         base = datetime.strptime(move_date, "%Y-%m-%d").date()
@@ -1591,7 +1589,7 @@ def check_contract_tasks(
     stage: Literal["계약전", "입주", "갱신", "퇴거", "보증금반환"] = "입주",
     housing_type: str = "월세",
 ) -> dict[str, Any]:
-    """ZipLife Navi returns practical lease, move-in, renewal, move-out, and deposit-protection checklists."""
+    """집생활 내비: 계약 전/입주/갱신/퇴거/보증금반환 단계별 실무 체크리스트를 제공한다."""
     normalized = re.sub(r"\s+", "", stage)
     tasks_map = {
         "계약전": ["등기부등본 확인", "임대인 정보 확인", "보증금/월세/관리비 항목 확인", "특약사항 확인", "전입신고와 확정일자 가능 여부 확인"],
@@ -1708,9 +1706,9 @@ def generate_message_template(
     recipient: str | None = None,
     tone: Literal["정중하게", "단호하게", "캐주얼하게"] = "정중하게",
 ) -> dict[str, Any]:
-    """ZipLife Navi drafts short Korean message templates for landlords, property managers, or agents,
-    covering move-in/move-out, contracts, repairs, rent negotiation, and loan paperwork — each in
-    3 tone variants (정중하게/단호하게/캐주얼하게)."""
+    """집생활 내비: 집주인·관리사무소·부동산 등에게 보낼 짧은 메시지를 작성한다.
+    입주/퇴거, 계약, 수리, 월세 협상, 대출 서류 등 다양한 상황을 다루며,
+    상황마다 정중하게/단호하게/캐주얼하게 3가지 톤으로 제공한다."""
 
     resolved_recipient = recipient or PURPOSE_DEFAULT_RECIPIENT.get(purpose, "집주인")
     message = MESSAGE_TEMPLATES[purpose][tone]
