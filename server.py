@@ -100,41 +100,54 @@ def _scan_amount_chunk(text: str, start: int) -> str:
 
 
 def _money_to_won(text: str, label: str) -> int | None:
-    """
-    금액 표현을 원 단위 정수로 변환.
-    지원 예시: '보증금 1000만원', '보증금 천만원', '보증금 1억 5천만원',
-              '월세 칠십', '월세는 80만원', '연봉 3000', '연봉 3천만원 정도'
-    명시적 단위(억/만/천만 등)가 없는 순수 숫자/한글숫자는 '만원' 단위로 간주한다.
-    (주거비/소득 맥락에서 통상적인 관용 표현을 따른 것으로, 오인 소지가 있어
-     detected_profile에는 항상 원 단위 정수로 정규화해 반환한다.)
-    """
-    label_match = re.search(rf"{label}\s*(?:은|는|이|가)?\s*", text)
-    if not label_match:
-        return None
 
-    chunk = _scan_amount_chunk(text, label_match.end())
-    if not chunk:
-        return None
 
-    total = 0
-    remainder = chunk
+    # '칠십이에요'에서 문법적인 '이'가 숫자 2로 붙는 문제 방지
+    # 칠십이에요 → 칠십에요
+    normalized_text = re.sub(
+        r"(?<=[십백천만억])이(?=에요)",
+        "",
+        text,
+    )
 
-    if "억" in remainder:
-        eok_str, remainder = remainder.split("억", 1)
-        eok_val = _mixed_to_int(eok_str) if eok_str else 1
-        total += (eok_val or 1) * 100_000_000
+    label_pattern = rf"{re.escape(label)}\s*(?:은|는|이|가)?\s*"
 
-    if "만" in remainder:
-        man_str, remainder = remainder.split("만", 1)
-        man_val = _mixed_to_int(man_str) if man_str else 1
-        total += (man_val or 1) * 10_000
-    elif remainder and total == 0:
-        # 억/만 단위 표시가 전혀 없는 순수 숫자/한글숫자 -> 관용적으로 '만원' 단위로 해석
-        val = _mixed_to_int(remainder)
-        if val is not None:
-            total += val * 10_000
+    # 같은 단어가 문장에 여러 번 등장할 수 있으므로 모두 확인
+    for label_match in re.finditer(label_pattern, normalized_text):
+        chunk = _scan_amount_chunk(
+            normalized_text,
+            label_match.end(),
+        )
 
-    return total if total > 0 else None
+        # '월세이고'처럼 뒤에 금액이 없는 경우 다음 '월세'를 찾는다.
+        if not chunk:
+            continue
+
+        total = 0
+        remainder = chunk
+
+        if "억" in remainder:
+            eok_str, remainder = remainder.split("억", 1)
+            eok_val = _mixed_to_int(eok_str) if eok_str else 1
+            total += (eok_val or 1) * 100_000_000
+
+        if "만" in remainder:
+            man_str, remainder = remainder.split("만", 1)
+            man_val = _mixed_to_int(man_str) if man_str else 1
+            total += (man_val or 1) * 10_000
+
+        elif remainder and total == 0:
+            value = _mixed_to_int(remainder)
+
+            # 단위가 생략된 주거비·소득 표현은 만원 단위로 해석
+            if value is not None:
+                total += value * 10_000
+
+        if total > 0:
+            return total
+
+    return None
+
 
 
 # ---------------------------------------------------------------------------
@@ -192,10 +205,32 @@ REQUIRED_FIELD_LABELS = {
     "is_homeless": "무주택 여부",
     "contract_status": "계약 진행 상태",
 }
+def _is_missing(value: Any) -> bool:
+    """None 또는 빈 문자열만 누락으로 판단한다.
+
+    False와 0은 사용자가 입력한 유효한 값이므로 누락이 아니다.
+    """
+    if value is None:
+        return True
+
+    if isinstance(value, str) and not value.strip():
+        return True
+
+    return False
 
 
 def _profile_missing(profile: dict[str, Any]) -> list[str]:
-    return [key for key in REQUIRED_FIELD_LABELS if not profile.get(key)]
+    required_fields = list(REQUIRED_FIELD_LABELS)
+
+    # 전세 사용자는 월세 금액을 입력할 필요가 없다.
+    if profile.get("housing_type") not in ("월세", "반전세"):
+        required_fields.remove("monthly_rent")
+
+    return [
+        key
+        for key in required_fields
+        if _is_missing(profile.get(key))
+    ]
 
 
 def _profile_summary_text(profile: dict[str, Any]) -> str:
@@ -245,7 +280,12 @@ BENEFITS: list[dict[str, Any]] = [
         "category": "대출/보증",
         "fit": ["청년", "월세", "전세", "반전세"],
         "required": ["age", "income", "deposit", "is_homeless"],
-        "conditions": {"age_min": 19, "age_max": 34},
+        "conditions": {
+            "age_min": 19,
+            "age_max": 34,
+            "housing_types": ["월세", "전세", "반전세"],
+            "requires_homeless": True,
+        },
         "why": "청년 전월세 보증금 마련이 필요한 상황으로 보여 매칭되었습니다.",
         "official_check": ["주택도시기금 청년전용 버팀목전세자금 요건", "은행별 취급 조건", "무주택 세대주 요건 충족 여부"],
         "official_links": [
@@ -271,9 +311,12 @@ BENEFITS: list[dict[str, Any]] = [
         "id": "buttmok_jeonse_loan",
         "name": "버팀목 전세자금대출",
         "category": "대출/보증",
-        "fit": ["전세", "이사"],
+        "fit": ["전세"],
         "required": ["income", "deposit", "is_homeless"],
-        "conditions": {},
+        "conditions": {
+            "housing_types": ["전세"],
+            "requires_homeless": True,
+        },
         "why": "전세 거주 예정이라 일반 서민 전세자금 대출 후보로 매칭되었습니다.",
         "official_check": ["부부합산 연소득 기준", "무주택 세대주 요건", "임차보증금 한도"],
         "official_links": [
@@ -287,7 +330,11 @@ BENEFITS: list[dict[str, Any]] = [
         "category": "대출/보증",
         "fit": ["신혼", "전세"],
         "required": ["marital_status", "income", "deposit", "is_homeless"],
-        "conditions": {"marital": "married_or_planning"},
+        "conditions": {
+            "marital": "married_or_planning",
+            "housing_types": ["전세"],
+            "requires_homeless": True,
+        },
         "why": "신혼(혹은 결혼 예정)이면서 전세 거주 예정이라 매칭되었습니다.",
         "official_check": ["혼인관계증명서 요건(혼인신고일 기준)", "부부합산 소득 기준", "보증금 한도"],
         "official_links": [
@@ -399,7 +446,11 @@ def _evaluate_benefit(profile: dict[str, Any], benefit: dict[str, Any]) -> dict[
     if conditions.get("requires_homeless") and profile.get("is_homeless") is False:
         hard_fail_reasons.append("무주택 조건을 충족하지 않는 것으로 확인됩니다.")
 
-    missing = [f for f in benefit["required"] if not profile.get(f)]
+    missing = [
+        field
+        for field in benefit["required"]
+        if _is_missing(profile.get(field))
+    ]
     missing_labels = [REQUIRED_FIELD_LABELS.get(f, f) for f in missing]
 
     if hard_fail_reasons:
@@ -514,6 +565,26 @@ def _trim(value: Any) -> str | None:
         return None
     text = re.sub(r"\s+", " ", str(value)).strip()
     return text if text else None
+
+def _sanitize_api_error(error: Exception) -> str:
+    """외부 API 오류 메시지에서 인증키와 URL 파라미터를 제거한다."""
+
+    message = str(error)
+
+    message = re.sub(
+        r"(?i)(apiKeyNm|openApiVlak|serviceKey)=([^&\s'\"]+)",
+        r"\1=***",
+        message,
+    )
+
+    # URL 전체가 불필요하게 노출되는 것도 방지
+    message = re.sub(
+        r"https?://[^\s'\"]+",
+        "[외부 API URL 숨김]",
+        message,
+    )
+
+    return message
 
 
 def _format_policy_item(item: dict[str, Any]) -> dict[str, Any]:
@@ -631,11 +702,11 @@ def search_official_youth_policy(
             "caution": "실시간 공식 데이터입니다. marital_status_code_raw/income_condition_code_raw는 온통청년 자체 코드로, 공식 코드정의서 없이는 의미를 단정할 수 없어 원본 그대로 제공합니다. apply_status는 서버 현재 날짜 기준 자동 계산값이니 최종 확인은 apply_url에서 하세요.",
         }
 
-    except Exception as exc:  # noqa: BLE001 - 외부 API 실패는 폴백으로 흡수
+    except Exception as exc:
         return {
             "summary": "실시간 조회에 실패해 자체 보유 데이터로 대체합니다.",
             "source": "static_fallback_on_error",
-            "error": str(exc),
+            "error_type": type(exc).__name__,
             "policies": _static_youth_fallback(keyword),
             "caution": "실시간 공식 데이터가 아닙니다. 최신 여부는 공식 링크에서 직접 확인하세요.",
         }
@@ -1152,15 +1223,33 @@ def _lh_items(data: Any) -> list[dict[str, Any]]:
 
     return []
 
+def _optional_int(value: Any) -> int | None:
+    """비어 있는 숫자 필드는 None으로 유지한다."""
+
+    if value is None:
+        return None
+
+    text = str(value).replace(",", "").strip()
+
+    if not text or text.lower() in {"-", "null", "none"}:
+        return None
+
+    try:
+        return int(text)
+    except ValueError:
+        return None
 
 def _format_lh_complex(item: dict[str, Any]) -> dict[str, Any] | None:
-    try:
-        deposit = int(str(item.get("LS_GMY", "0")).replace(",", "").strip() or 0)
-        monthly_rent = int(str(item.get("RFE", "0")).replace(",", "").strip() or 0)
-        total_households = int(str(item.get("SUM_HSH_CNT", "0")).replace(",", "").strip() or 0)
-        households = int(str(item.get("HSH_CNT", "0")).replace(",", "").strip() or 0)
-    except (TypeError, ValueError):
-        return None
+    deposit = _optional_int(item.get("LS_GMY"))
+    monthly_rent = _optional_int(item.get("RFE"))
+    total_households = _optional_int(item.get("SUM_HSH_CNT"))
+    households = _optional_int(item.get("HSH_CNT"))
+
+    if total_households is None:
+        total_households = 0
+
+    if households is None:
+        households = 0
 
     all_cnt_raw = str(item.get("ALL_CNT", "")).replace(",", "").strip()
     all_cnt = int(all_cnt_raw) if all_cnt_raw.isdigit() else None
@@ -1175,6 +1264,15 @@ def _format_lh_complex(item: dict[str, Any]) -> dict[str, Any] | None:
         # 이미 원 단위. 만원 단위 변환 절대 하지 않는다 (국토부 API와 다름).
         "deposit_won": deposit,
         "monthly_rent_won": monthly_rent,
+        "rent_information_status": (
+            "원본 API 값이 모두 0원입니다. 실제 임대조건은 최신 공고에서 확인이 필요합니다."
+            if deposit == 0 and monthly_rent == 0
+            else (
+                "원본 API에 임대금액 정보가 없습니다."
+                if deposit is None and monthly_rent is None
+                else "임대금액 정보 제공"
+            )
+        ),
         "first_move_in_ym": _trim(item.get("MVIN_XPC_YM")),
         "_all_cnt": all_cnt,  # 페이지네이션 전체건수 계산용 내부 필드
     }
@@ -1323,12 +1421,46 @@ def parse_housing_profile(user_text: str) -> dict[str, Any]:
     elif "미혼" in user_text:
         marital_status = "single"
 
-    if any(k in user_text for k in ["계약 전", "계약전", "아직 계약", "계약 안"]):
+    before_signing_pattern = re.search(
+        r"계약(?:은|는|이|가)?\s*"
+        r"(?:아직\s*)?"
+        r"(?:안\s*(?:했|한|함|했어|했습니다)|전)",
+        user_text,
+    )
+
+    if (
+        before_signing_pattern
+        or any(
+            keyword in user_text
+            for keyword in [
+                "아직 계약하지",
+                "계약하지 않았",
+                "계약하지 않은",
+                "계약 전",
+                "계약전",
+                "미계약",
+            ]
+        )
+    ):
         contract_status = "before_signing"
-    elif any(k in user_text for k in ["계약함", "계약했", "계약서 작성", "계약 완료", "계약체결"]):
+
+    elif any(
+        keyword in user_text
+        for keyword in [
+            "계약함",
+            "계약했",
+            "계약을 했",
+            "계약서 작성",
+            "계약 완료",
+            "계약체결",
+            "계약 체결",
+        ]
+    ):
         contract_status = "signed"
+
     elif "계약" in user_text:
         contract_status = "in_progress"
+
     else:
         contract_status = None
 
@@ -1382,8 +1514,31 @@ def parse_housing_profile(user_text: str) -> dict[str, Any]:
 
 
 @mcp.tool(annotations=READ_ONLY)
+def _unwrap_profile(profile: dict[str, Any]) -> dict[str, Any]:
+    """MCP 연결 과정에서 한 번 더 감싸진 profile 객체를 해제한다."""
+
+    current = profile
+
+    # 최대 3번까지만 풀어 무한 중첩을 방지한다.
+    for _ in range(3):
+        nested = None
+
+        for key in ("profile", "detected_profile"):
+            value = current.get(key)
+
+            if isinstance(value, dict):
+                nested = value
+                break
+
+        if nested is None:
+            break
+
+        current = nested
+
+    return current
 def ask_missing_info(profile: dict[str, Any]) -> dict[str, Any]:
     """집생활 내비: 주거지원 대상 여부를 더 정확히 판단하기 위해 부족한 정보를 질문 형태로 만든다."""
+    profile = _unwrap_profile(profile)
     question_map = {
         "age": "나이가 어떻게 돼?",
         "region": "어느 지역 집으로 이사해?",
@@ -1421,6 +1576,7 @@ def match_housing_benefits(profile: dict[str, Any]) -> dict[str, Any]:
     판정은 절대 하지 않는다. 청년(만 39세 이하) 프로필이면 온통청년 공식 API(search_official_youth_policy)에서
     실시간 청년정책 후보도 함께 가져온다. 신혼(예정 포함) 프로필이고 지역이 확인되면 LH 공공임대주택
     단지 목록(search_lh_rental_complexes, 신혼희망타운 키워드)도 실시간으로 함께 가져온다."""
+    profile = _unwrap_profile(profile)
 
     tags = set()
     is_youth = profile.get("age") is not None and profile["age"] <= 39
@@ -1553,11 +1709,13 @@ def generate_moving_timeline(move_date: str, housing_type: str = "월세") -> di
     """집생활 내비: 전세/월세 세입자를 위한 이사 D-day 체크리스트를 생성한다.
     move_date는 ISO 날짜 형식(YYYY-MM-DD)이어야 하며, parse_housing_profile의 출력값을 그대로 넣을 수 있다."""
 
+    cleaned_move_date = str(move_date).strip().strip('"').strip("'").strip()
+
     try:
-        base = datetime.strptime(move_date, "%Y-%m-%d").date()
+        base = datetime.strptime(cleaned_move_date, "%Y-%m-%d").date()
     except (ValueError, TypeError):
         return {
-            "summary": f"'{move_date}'를 날짜로 인식하지 못했습니다.",
+            "summary": f"'{cleaned_move_date}'를 날짜로 인식하지 못했습니다.",
             "timeline": [],
             "next_actions": ["move_date를 YYYY-MM-DD 형식으로 다시 전달해주세요. 예: 2026-08-03"],
             "caution": "날짜 형식이 올바르지 않으면 정확한 D-day 계산이 불가능합니다.",
