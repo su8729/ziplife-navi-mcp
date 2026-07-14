@@ -478,7 +478,7 @@ def _evaluate_benefit(profile: dict[str, Any], benefit: dict[str, Any]) -> dict[
 # Tools
 # ---------------------------------------------------------------------------
 
-READ_ONLY = {"readOnlyHint": True, "openWorldHint": False, "idempotentHint": True}
+READ_ONLY = {"readOnlyHint": True, "openWorldHint": False, "idempotentHint": True, "destructiveHint": False}
 
 
 # ---------------------------------------------------------------------------
@@ -651,7 +651,7 @@ def search_official_youth_policy(
     region: str | None = None,
     mid_category: str | None = None,
 ) -> dict[str, Any]:
-    """온통청년(youthcenter.go.kr) 청년정책 오픈API를 실시간으로 조회해 공식 청년정책 후보를 가져온다.
+    """집생활 내비: 온통청년(youthcenter.go.kr) 청년정책 오픈API를 실시간으로 조회해 공식 청년정책 후보를 가져온다.
     API 키(YOUTHCENTER_API_KEY 환경변수)가 없거나 호출이 실패하면 자체 보유 정적 데이터로 자동 폴백한다.
     keyword는 plcyKywdNm(정책키워드명)으로, region은 '서울' 같은 시/도명으로 전달하면 zipCd로 변환된다."""
 
@@ -979,7 +979,7 @@ def check_market_rent(
     user_monthly_rent: int | None = None,
     fetch_all: bool = False,
 ) -> dict[str, Any]:
-    """국토교통부 전월세 실거래가 오픈API(공공데이터포털)를 실시간으로 조회해 해당 자치구의 최근 거래
+    """집생활 내비: 국토교통부 전월세 실거래가 오픈API(공공데이터포털)를 실시간으로 조회해 해당 자치구의 최근 거래
     평균 보증금/월세를 계산하고, user_deposit/user_monthly_rent(원 단위)와 비교해 시세 대비 높은지/낮은지
     안내한다. 현재는 서울 25개 자치구만 지원한다.
     property_type은 사용자가 실제로 말한 표현을 그대로 전달하면 된다 — '아파트', '오피스텔', '빌라',
@@ -1285,7 +1285,7 @@ def search_lh_rental_complexes(
     page: int = 1,
     page_size: int = 20,
 ) -> dict[str, Any]:
-    """한국토지주택공사(LH) 임대주택단지 조회 오픈API(공공데이터포털)를 실시간으로 조회해
+    """집생활 내비: 한국토지주택공사(LH) 임대주택단지 조회 오픈API(공공데이터포털)를 실시간으로 조회해
     해당 시/도의 공공임대주택 단지 목록(단지명, 공급유형, 총세대수, 전용면적, 임대보증금, 월임대료 등)을
     가져온다. region은 '서울', '경기' 같은 시/도명이며 서울 자치구뿐 아니라 전국 시/도를 지원한다.
     supply_type_keyword로 '국민임대', '공공임대', '영구임대', '행복주택', '장기전세', '매입임대',
