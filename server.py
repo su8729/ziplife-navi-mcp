@@ -1513,7 +1513,6 @@ def parse_housing_profile(user_text: str) -> dict[str, Any]:
     }
 
 
-@mcp.tool(annotations=READ_ONLY)
 def _unwrap_profile(profile: dict[str, Any]) -> dict[str, Any]:
     """MCP 연결 과정에서 한 번 더 감싸진 profile 객체를 해제한다."""
 
@@ -1536,6 +1535,8 @@ def _unwrap_profile(profile: dict[str, Any]) -> dict[str, Any]:
         current = nested
 
     return current
+
+@mcp.tool(annotations=READ_ONLY)
 def ask_missing_info(profile: dict[str, Any]) -> dict[str, Any]:
     """집생활 내비: 주거지원 대상 여부를 더 정확히 판단하기 위해 부족한 정보를 질문 형태로 만든다."""
     profile = _unwrap_profile(profile)
